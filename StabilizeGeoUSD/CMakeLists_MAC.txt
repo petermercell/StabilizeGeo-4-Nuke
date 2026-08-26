@@ -1,0 +1,116 @@
+cmake_minimum_required(VERSION 3.11)
+project(StabilizeGeoUSD)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# ============================================================================
+#  StabilizeGeoUSD - New 3D / USD-system NDK plugin (macOS).
+#  Build against a COMMERCIAL Nuke 17 (the app WITHOUT "Non-Commercial" in its
+#  name) that includes the New-3D / USD NDK headers.
+#     cmake -B build -DNUKE_VERSION=17.0v1
+#     cmake --build build
+#     cp build/StabilizeGeoUSD.dylib ~/.nuke/
+# ============================================================================
+
+# RPATH - rely on Nuke's environment (no rpath baked in)
+set(CMAKE_SKIP_BUILD_RPATH TRUE)
+set(CMAKE_SKIP_INSTALL_RPATH TRUE)
+set(CMAKE_MACOSX_RPATH FALSE)
+
+# macOS
+if(APPLE)
+    set(CMAKE_OSX_ARCHITECTURES "arm64")
+endif()
+
+# Nuke version (override with -DNUKE_VERSION=...)
+if(NOT DEFINED NUKE_VERSION)
+    set(NUKE_VERSION "17.0v1")
+endif()
+set(NUKE_BASE_DIR "/Applications/Nuke${NUKE_VERSION}")
+message(STATUS "Nuke Version: ${NUKE_VERSION}")
+
+# Use the exact COMMERCIAL app name (NO "Non-Commercial" suffix). Override the
+# whole path with -DNUKE_INSTALL_DIR=... if your layout differs.
+if(NOT DEFINED NUKE_INSTALL_DIR)
+    set(NUKE_INSTALL_DIR "${NUKE_BASE_DIR}/Nuke${NUKE_VERSION}.app/Contents/MacOS")
+endif()
+message(STATUS "Nuke Directory: ${NUKE_INSTALL_DIR}")
+
+if(NOT EXISTS "${NUKE_INSTALL_DIR}")
+    message(FATAL_ERROR "Nuke directory not found: ${NUKE_INSTALL_DIR}")
+endif()
+if(NOT EXISTS "${NUKE_INSTALL_DIR}/libDDImage.dylib")
+    message(FATAL_ERROR "libDDImage.dylib not found in: ${NUKE_INSTALL_DIR}")
+endif()
+if(NOT EXISTS "${NUKE_INSTALL_DIR}/libFnUsdEngine.dylib")
+    message(FATAL_ERROR "libFnUsdEngine.dylib not found in: ${NUKE_INSTALL_DIR}")
+endif()
+if(NOT EXISTS "${NUKE_INSTALL_DIR}/libFnUsdAbstraction.dylib")
+    message(FATAL_ERROR "libFnUsdAbstraction.dylib not found in: ${NUKE_INSTALL_DIR}")
+endif()
+# libFdkBase ships with a version number baked into the filename
+# (e.g. libFdkBase.2.1.dylib) that changes between Nuke releases, so glob
+# for it rather than hardcoding one version.
+file(GLOB NUKE_FDKBASE_LIB "${NUKE_INSTALL_DIR}/libFdkBase*.dylib")
+if(NOT NUKE_FDKBASE_LIB)
+    message(FATAL_ERROR "libFdkBase*.dylib not found in: ${NUKE_INSTALL_DIR}")
+endif()
+list(GET NUKE_FDKBASE_LIB 0 NUKE_FDKBASE_LIB)
+message(STATUS "  FdkBase lib:  ${NUKE_FDKBASE_LIB}")
+if(NOT EXISTS "${NUKE_INSTALL_DIR}/libNdk.dylib")
+    message(FATAL_ERROR "libNdk.dylib not found in: ${NUKE_INSTALL_DIR}")
+endif()
+
+# Sanity: confirm New-3D / USD NDK headers are present (commercial Nuke only).
+if(NOT EXISTS "${NUKE_INSTALL_DIR}/include/DDImage/ModifyGeomOp.h")
+    message(FATAL_ERROR
+        "New-3D headers (include/DDImage/ModifyGeomOp.h) not found in:\n  ${NUKE_INSTALL_DIR}\n"
+        "Make sure you are pointing at a COMMERCIAL Nuke 17 build with the USD NDK "
+        "(no 'Non-Commercial').")
+endif()
+
+# Include dirs: Nuke headers + this folder (StabilizeMath.h)
+include_directories("${NUKE_INSTALL_DIR}/include")
+include_directories("${CMAKE_CURRENT_SOURCE_DIR}")
+
+add_compile_options(-fPIC)
+
+# Nuke loads plugins by bare name (no "lib" prefix)
+set(CMAKE_SHARED_LIBRARY_PREFIX "")
+
+# Plugin
+add_library(StabilizeGeoUSD SHARED StabilizeGeo.cpp)
+set_target_properties(StabilizeGeoUSD PROPERTIES
+    SUFFIX ".dylib"
+    INSTALL_NAME_DIR "@rpath"
+    BUILD_WITH_INSTALL_NAME_DIR TRUE)
+
+# Link DDImage + the four New-3D/USD API libraries. Unlike Linux's ELF loader
+# (which tolerates undefined symbols in a .so by default), macOS's ld uses a
+# two-level namespace and refuses to produce a .dylib with unresolved
+# symbols, so everything must be linked explicitly here rather than left to
+# resolve at load time.
+#
+# Per Foundry's NDK docs, the new API lives in five libraries -
+# libFdkBase(fdk), libFnUsdAbstraction(usg), libFnUsdEngine(usg),
+# libFnUsdShim(usg) and libNdk(ndk) - and you link against all of them
+# except libFnUsdShim (that one is dlopened at runtime by
+# libFnUsdAbstraction, not linked directly). The usg::PointBasedPrim /
+# usg::Attribute / usg::Path / usg::Prim wrapper types used in
+# StabilizeGeo.cpp live in libFnUsdAbstraction, not libFnUsdEngine, which is
+# why linking only DDImage + FnUsdEngine left those symbols unresolved.
+target_link_libraries(StabilizeGeoUSD PRIVATE
+    "${NUKE_INSTALL_DIR}/libDDImage.dylib"
+    "${NUKE_INSTALL_DIR}/libFnUsdEngine.dylib"
+    "${NUKE_INSTALL_DIR}/libFnUsdAbstraction.dylib"
+    "${NUKE_FDKBASE_LIB}"
+    "${NUKE_INSTALL_DIR}/libNdk.dylib")
+
+install(TARGETS StabilizeGeoUSD DESTINATION ${CMAKE_INSTALL_PREFIX})
+
+message(STATUS "========================================")
+message(STATUS "  Plugin:       StabilizeGeoUSD.dylib")
+message(STATUS "  Nuke Version: ${NUKE_VERSION}")
+message(STATUS "  Nuke Dir:     ${NUKE_INSTALL_DIR}")
+message(STATUS "  Arch:         ${CMAKE_OSX_ARCHITECTURES}")
+message(STATUS "========================================")
