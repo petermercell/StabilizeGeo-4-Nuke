@@ -1,0 +1,80 @@
+cmake_minimum_required(VERSION 3.11)
+project(StabilizeGeo)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# ============================================================================
+#  StabilizeGeo - NDK build (modeled on the proven CrankItUp config)
+#
+#  Build against a COMMERCIAL Nuke (the app WITHOUT "Non-Commercial" in its
+#  name). To RUN the plugin you must also launch that commercial Nuke.
+#     cmake -B build -DNUKE_VERSION=17.0v1
+#     cmake --build build
+#     cp build/StabilizeGeo.dylib ~/.nuke/
+# ============================================================================
+
+# RPATH - rely on Nuke's environment (no rpath baked in)
+set(CMAKE_SKIP_BUILD_RPATH TRUE)
+set(CMAKE_SKIP_INSTALL_RPATH TRUE)
+set(CMAKE_MACOSX_RPATH FALSE)
+
+# macOS
+if(APPLE)
+    set(CMAKE_OSX_ARCHITECTURES "arm64")
+endif()
+
+# Nuke version (override with -DNUKE_VERSION=...)
+if(NOT DEFINED NUKE_VERSION)
+    set(NUKE_VERSION "17.0v1")
+endif()
+set(NUKE_BASE_DIR "/Applications/Nuke${NUKE_VERSION}")
+message(STATUS "Nuke Version: ${NUKE_VERSION}")
+
+# Use the exact COMMERCIAL app name (NO "Non-Commercial" suffix). Override the
+# whole path with -DNUKE_INSTALL_DIR=... if your layout differs.
+if(NOT DEFINED NUKE_INSTALL_DIR)
+    set(NUKE_INSTALL_DIR "${NUKE_BASE_DIR}/Nuke${NUKE_VERSION}.app/Contents/MacOS")
+endif()
+message(STATUS "Nuke Directory: ${NUKE_INSTALL_DIR}")
+
+if(NOT EXISTS "${NUKE_INSTALL_DIR}")
+    message(FATAL_ERROR "Nuke directory not found: ${NUKE_INSTALL_DIR}")
+endif()
+if(NOT EXISTS "${NUKE_INSTALL_DIR}/libDDImage.dylib")
+    message(FATAL_ERROR "libDDImage.dylib not found in: ${NUKE_INSTALL_DIR}")
+endif()
+
+# Sanity: confirm NDK headers are present (commercial Nuke only).
+if(NOT EXISTS "${NUKE_INSTALL_DIR}/include/DDImage/Op.h")
+    message(FATAL_ERROR
+        "NDK headers (include/DDImage/Op.h) not found in:\n  ${NUKE_INSTALL_DIR}\n"
+        "Make sure you are pointing at the COMMERCIAL Nuke app (no 'Non-Commercial').")
+endif()
+
+# Include dirs: Nuke headers + this folder (StabilizeMath.h)
+include_directories("${NUKE_INSTALL_DIR}/include")
+include_directories("${CMAKE_CURRENT_SOURCE_DIR}")
+
+#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D_GLIBCXX_USE_CXX11_ABI=0")
+add_compile_options(-fPIC)
+
+# Nuke loads plugins by bare name (no "lib" prefix)
+set(CMAKE_SHARED_LIBRARY_PREFIX "")
+
+# Plugin
+add_library(StabilizeGeo SHARED StabilizeGeo.cpp)
+set_target_properties(StabilizeGeo PROPERTIES
+    SUFFIX ".dylib"
+    INSTALL_NAME_DIR "@rpath"
+    BUILD_WITH_INSTALL_NAME_DIR TRUE)
+target_link_libraries(StabilizeGeo PRIVATE
+    "${NUKE_INSTALL_DIR}/libDDImage.dylib"
+    "-framework OpenGL")
+install(TARGETS StabilizeGeo DESTINATION ${CMAKE_INSTALL_PREFIX})
+
+message(STATUS "========================================")
+message(STATUS "  Plugin:       StabilizeGeo.dylib")
+message(STATUS "  Nuke Version: ${NUKE_VERSION}")
+message(STATUS "  Nuke Dir:     ${NUKE_INSTALL_DIR}")
+message(STATUS "  Arch:         ${CMAKE_OSX_ARCHITECTURES}")
+message(STATUS "========================================")
