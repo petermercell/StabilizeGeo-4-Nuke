@@ -1,20 +1,20 @@
-#! /opt/Nuke16.0v6/libnuke-16.0.6.so -nx
-version 16.0 v6
+#! /Applications/Nuke17.1v1/Nuke17.1v1.app/Contents/MacOS/libnuke-17.1.1.dylib -nx
+version 17.1 v1
 define_window_layout_xml {<?xml version="1.0" encoding="UTF-8"?>
 <layout version="1.0">
-    <window x="0" y="32" w="2560" h="1387" maximized="1" screen="0">
+    <window x="0" y="30" w="1440" h="797" maximized="1" screen="0">
         <splitter orientation="1">
             <split size="40"/>
             <dock id="" hideTitles="1" activePageId="Toolbar.1">
                 <page id="Toolbar.1"/>
             </dock>
-            <split size="1897" stretch="1"/>
+            <split size="777" stretch="1"/>
             <splitter orientation="2">
-                <split size="790"/>
+                <split size="456"/>
                 <dock id="" activePageId="Viewer.1">
                     <page id="Viewer.1"/>
                 </dock>
-                <split size="555"/>
+                <split size="321"/>
                 <dock id="" activePageId="DAG.1" focus="true">
                     <page id="DAG.1"/>
                     <page id="Curve Editor.1"/>
@@ -33,8 +33,8 @@ define_window_layout_xml {<?xml version="1.0" encoding="UTF-8"?>
 }
 Root {
  inputs 0
- name /home/pm/Documents/NUKE_Scripts/GeoStabilTestScript.nk
- frame 79
+ name /Users/g/Downloads/StabilizeGeo-4-Nuke-main/GeoStabilTestScript.nk
+ frame 80
  format "2048 1556 0 0 2048 1556 1 2K_Super_35(full-ap)"
  proxy_type scale
  proxy_format "1024 778 0 0 1024 778 1 1K_Super_35(full-ap)"
@@ -55,20 +55,18 @@ Axis3 {
  xpos -523
  ypos -104
 }
-set N14c595c0 [stack 0]
-push $N14c595c0
-push $N14c595c0
-GeoImport {
+set N5c67e800 [stack 0]
+push $N5c67e800
+push $N5c67e800
+GeoCube {
  inputs 0
- file "/home/pm/Documents/IDEA/290626/Nuke 17_3D_Examples/cube_uv.usda"
- range_first 0
- range_last 0
- name GeoImport8
+ name GeoCube1
  xpos -299
- ypos -171
+ ypos -202
 }
 GeoTransform {
  inputs 2
+ constraint_maintain_offset_frame 79
  name GeoTransform1
  xpos -299
  ypos -111
@@ -96,26 +94,25 @@ Axis3 {
  xpos 215
  ypos -130
 }
-set N13d3c620 [stack 0]
-push $N13d3c620
+set N5c67f200 [stack 0]
+push $N5c67f200
 Dot {
  name Dot15
  xpos 239
  ypos 22
 }
-set N13bd7220 [stack 0]
-push $N13bd7220
+set N5c67f700 [stack 0]
+push $N5c67f700
 CheckerBoard2 {
  inputs 0
  name CheckerBoard8
  xpos 716
  ypos -405
 }
-ReadGeo2 {
- file "/home/pm/Documents/IDEA/290626/Nuke 17_3D_Examples/cube_uv.obj"
- name ReadGeo3
+Cube {
+ name Cube1
  xpos 716
- ypos -238
+ ypos -249
 }
 TransformGeo {
  inputs 2
@@ -139,9 +136,10 @@ StabilizeGeo {
  ypos -10
 }
 Viewer {
- frame 79
+ frame 80
  frame_range 1-100
- monitorOutNDISenderName "Nuke - GeoStabilTestScript - Viewer1"
+ render_settings_schema false
+ monitorOutNDISenderName "NukeX - GeoStabilTestScript - Viewer1"
  monitorOutOutputTransform rec709
  name Viewer1
  xpos -40
