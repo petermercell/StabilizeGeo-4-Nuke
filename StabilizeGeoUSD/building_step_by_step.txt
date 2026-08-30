@@ -5,6 +5,21 @@ cmake .. -DNUKE_VERSION=17.0v1 -DCMAKE_INSTALL_PREFIX=~/.nuke
 
 make 
 
+////
 
+WIN:
+
+cd C:\Users\WORKSTATION\Downloads\StabilizeGeo-4-Nuke-main\StabilizeGeo-4-Nuke-main\StabilizeGeo
+
+cd C:\Users\WORKSTATION\Downloads\StabilizeGeo-4-Nuke-main\StabilizeGeo-4-Nuke-main\StabilizeGeoUSD
+
+rmdir /s /q build
+mkdir build
+cd build
+cmake .. -G "Visual Studio 17 2022" -A x64 -DNUKE_VERSION=17.1v1 -DCMAKE_INSTALL_PREFIX=%USERPROFILE%\.nuke
+cmake --build . --config Release --verbose
+
+
+rmdir /s /q build 2>nul & mkdir build && cd build && cmake .. -G "Visual Studio 17 2022" -A x64 -DNUKE_VERSION=17.1v1 -DCMAKE_INSTALL_PREFIX=%USERPROFILE%\.nuke && cmake --build . --config Release
 
 
