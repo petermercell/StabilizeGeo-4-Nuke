@@ -1,0 +1,281 @@
+cmake_minimum_required(VERSION 3.15)
+
+# CRITICAL: Set MSVC runtime library policy BEFORE project()
+cmake_policy(SET CMP0091 NEW)
+
+project(StabilizeGeo LANGUAGES CXX)
+
+# ============================================================================
+# Windows-specific Configuration
+# ============================================================================
+if(NOT WIN32)
+  message(FATAL_ERROR "This CMakeLists.txt is for Windows only")
+endif()
+
+if(MSVC)
+  if(MSVC_VERSION LESS 1930)
+    message(FATAL_ERROR "Visual Studio 2022 or later required (MSVC 19.30+)")
+  else()
+    message(STATUS "Using MSVC version ${MSVC_VERSION}")
+  endif()
+else()
+  message(FATAL_ERROR "This build requires MSVC (Visual Studio)")
+endif()
+
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release)
+endif()
+
+# ============================================================================
+# Runtime library: DYNAMIC (/MD) - this is not optional for a Nuke plugin.
+#
+# Nuke itself is built /MD. This plugin passes std::shared_ptr, std::vector
+# (with DDImage's own allocators), std::string and usg::Array across the
+# DDImage / FnUsdEngine DLL boundary. Under /MT the plugin gets a second,
+# independent CRT heap and its own copies of the STL statics, so memory
+# allocated on one side and freed on the other corrupts the heap - typically
+# far away from the call site that caused it.
+# ============================================================================
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# ============================================================================
+# Nuke Configuration
+# ============================================================================
+if(NOT DEFINED NUKE_VERSION)
+  set(NUKE_VERSION "17.1v1")
+endif()
+
+if(NOT DEFINED NDKDIR)
+  set(NDKDIR "C:/Program Files/Nuke${NUKE_VERSION}")
+endif()
+
+message(STATUS "Using Nuke version: ${NUKE_VERSION}")
+message(STATUS "Nuke directory: ${NDKDIR}")
+
+if(NOT EXISTS "${NDKDIR}")
+  message(FATAL_ERROR "Nuke directory not found: ${NDKDIR}")
+endif()
+
+# ---- DDImage ---------------------------------------------------------------
+find_library(NUKE_DDIMAGE_LIB
+  NAMES DDImage
+  PATHS "${NDKDIR}"
+  NO_DEFAULT_PATH
+)
+if(NOT NUKE_DDIMAGE_LIB)
+  message(FATAL_ERROR "DDImage.lib not found in: ${NDKDIR}")
+endif()
+
+# ---- New 3D / USD engine ---------------------------------------------------
+# All usg::* and fdk::* symbols (GeomEngine, PointBasedPrim, Attribute, Prim,
+# BoundablePrim, fdk::defaultTimeValue, ...) live here, NOT in DDImage.lib.
+# This is the Windows counterpart of libFnUsdEngine.dylib on macOS.
+#
+# If the name differs in your Nuke build, find the right import lib with:
+#
+#   for %f in ("${NDKDIR}\*.lib") do @dumpbin /exports "%f" ^
+#       | findstr /c:"isValid@Attribute@usg" >nul && echo FOUND: %f
+#
+# then pass it explicitly:  cmake .. -DNUKE_USDENGINE_LIB=<full path to .lib>
+find_library(NUKE_USDENGINE_LIB
+  NAMES FnUsdEngine libFnUsdEngine usg FnUSD
+  PATHS "${NDKDIR}"
+  NO_DEFAULT_PATH
+)
+if(NOT NUKE_USDENGINE_LIB)
+  file(GLOB _nuke_libs "${NDKDIR}/*.lib")
+  message(FATAL_ERROR
+    "Could not find the Nuke USD/New-3D import library (FnUsdEngine.lib) in:\n"
+    "  ${NDKDIR}\n"
+    "Without it every usg::* and fdk::* symbol fails to link (LNK2019/LNK2001).\n"
+    "Libraries present in that directory:\n"
+    "  ${_nuke_libs}\n"
+    "Re-run with -DNUKE_USDENGINE_LIB=<full path to the correct .lib>")
+endif()
+
+# Optional second library, only needed if fdk::* turns out to live apart from
+# usg::* in your Nuke build. Leave unset otherwise.
+#   cmake .. -DNUKE_FDK_LIB=<full path to .lib>
+set(NUKE_FDK_LIB "" CACHE FILEPATH "Optional separate fdk import library")
+
+# ---- Remaining usg::/fdk:: modules -----------------------------------------
+# DDImage + FnUsdEngine do NOT cover everything. The usg/geom schema classes
+# (Prim, Attribute, PointBasedPrim, BoundablePrim) and the fdk/base helpers
+# (defaultTimeValue, isDefaultTimeValue) are exported by further libraries in
+# the Nuke root.
+#
+# With NUKE_LINK_ALL_LIBS=ON (default) every .lib in ${NDKDIR} is put on the
+# link line. These are all import libraries, so any that go unreferenced add
+# nothing at all to the produced DLL - no extra runtime dependency, no bloat.
+# Once the build succeeds, run:
+#
+#   dumpbin /dependents build\Release\StabilizeGeo.dll
+#
+# to see the DLLs actually required, and set NUKE_LINK_ALL_LIBS=OFF plus
+# -DNUKE_EXTRA_LIBS="<lib1>;<lib2>" for a minimal, explicit link line.
+option(NUKE_LINK_ALL_LIBS
+       "Link every import library found in NDKDIR (discovery mode)" ON)
+
+set(NUKE_EXTRA_LIBS "" CACHE STRING
+    "Semicolon-separated extra Nuke import libraries to link")
+
+set(_nuke_sweep_libs "")
+if(NUKE_LINK_ALL_LIBS)
+  file(GLOB _nuke_sweep_libs "${NDKDIR}/*.lib")
+  list(REMOVE_ITEM _nuke_sweep_libs "${NUKE_DDIMAGE_LIB}" "${NUKE_USDENGINE_LIB}")
+  list(LENGTH _nuke_sweep_libs _nuke_sweep_count)
+  message(STATUS "Sweeping ${_nuke_sweep_count} additional import libraries from ${NDKDIR}")
+endif()
+
+# ============================================================================
+# Windows Compiler Flags and Definitions
+# ============================================================================
+add_definitions(
+  -DWIN32
+  -D_WINDOWS
+  -DNOMINMAX                    # Prevent min/max macro conflicts
+  -D_CRT_SECURE_NO_WARNINGS
+  -D_SCL_SECURE_NO_WARNINGS
+  -D_USE_MATH_DEFINES
+  -DWIN32_LEAN_AND_MEAN
+)
+# NDEBUG comes from the Release config; don't force it into Debug builds.
+
+if(MSVC)
+  add_compile_options(
+    /W3
+    /EHsc        # Exception handling
+    /FS          # Force synchronous PDB writes
+    /nologo
+    /bigobj      # Nuke 17 USD headers generate a lot of template instantiations
+  )
+
+  # Optimisation only in optimised configs - /O2 in a Debug build defeats the
+  # point of the Debug build.
+  add_compile_options(
+    $<$<NOT:$<CONFIG:Debug>>:/O2>
+    $<$<NOT:$<CONFIG:Debug>>:/Ob2>
+  )
+
+  # Noise from Nuke's own headers, not from this plugin.
+  add_compile_options(
+    /wd4251      # 'x' needs dll-interface (std::unique_ptr members in usg/*)
+    /wd4996      # STL*Allocator / AxisOp::matrix deprecation warnings
+    /wd4244      # conversion warnings inside fdk/base/Hash.h
+    /wd4514      # Unreferenced inline function removed
+    /wd4710      # Function not inlined
+    /wd4711      # Function selected for inline expansion
+    /wd4668      # Undefined preprocessor macro
+  )
+endif()
+
+# ============================================================================
+# Create StabilizeGeo Plugin
+# ============================================================================
+add_library(StabilizeGeo SHARED src/StabilizeGeo.cpp)
+
+set_property(TARGET StabilizeGeo PROPERTY
+  MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+
+target_include_directories(StabilizeGeo PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src
+    "${NDKDIR}/include"
+)
+
+target_compile_definitions(StabilizeGeo PRIVATE
+    _USE_MATH_DEFINES
+    NOMINMAX
+)
+
+target_link_libraries(StabilizeGeo PRIVATE
+    ${NUKE_DDIMAGE_LIB}
+    ${NUKE_USDENGINE_LIB}
+    opengl32
+)
+if(NUKE_FDK_LIB)
+  target_link_libraries(StabilizeGeo PRIVATE ${NUKE_FDK_LIB})
+endif()
+if(NUKE_EXTRA_LIBS)
+  target_link_libraries(StabilizeGeo PRIVATE ${NUKE_EXTRA_LIBS})
+endif()
+if(_nuke_sweep_libs)
+  target_link_libraries(StabilizeGeo PRIVATE ${_nuke_sweep_libs})
+endif()
+
+# NOTE ON THE DLL NAME
+# The node registers itself as "StabilizeGeoUSD", but this builds
+# StabilizeGeo.dll. Nuke's plugin-path auto-load looks for <ClassName>.dll, so
+# with this name the node only loads if you nuke.load() it explicitly or create
+# it from a menu.py entry. To get auto-loading, change OUTPUT_NAME below to
+# "StabilizeGeoUSD".
+set_target_properties(StabilizeGeo PROPERTIES
+    OUTPUT_NAME "StabilizeGeo"
+    SUFFIX ".dll"
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/Release
+    LIBRARY_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/Release
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ============================================================================
+# Installation Configuration
+# ============================================================================
+if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+  set(CMAKE_INSTALL_PREFIX "$ENV{USERPROFILE}/.nuke"
+      CACHE PATH "Install path" FORCE)
+endif()
+
+install(TARGETS StabilizeGeo
+        RUNTIME DESTINATION .
+        LIBRARY DESTINATION .
+)
+
+# ============================================================================
+# Print Configuration Summary
+# ============================================================================
+message(STATUS "")
+message(STATUS "===========================================================================")
+message(STATUS "Windows Build Configuration Summary:")
+message(STATUS "  Build Type:        ${CMAKE_BUILD_TYPE}")
+message(STATUS "  Compiler:          MSVC ${MSVC_VERSION}")
+message(STATUS "  C++ Standard:      C++${CMAKE_CXX_STANDARD}")
+message(STATUS "  Runtime Linking:   DYNAMIC (/MD) - matches Nuke's own runtime")
+message(STATUS "  ")
+message(STATUS "Nuke Configuration:")
+message(STATUS "  Nuke Version:      ${NUKE_VERSION}")
+message(STATUS "  Nuke Directory:    ${NDKDIR}")
+message(STATUS "  DDImage:           ${NUKE_DDIMAGE_LIB}")
+message(STATUS "  USD engine:        ${NUKE_USDENGINE_LIB}")
+if(NUKE_FDK_LIB)
+  message(STATUS "  fdk:               ${NUKE_FDK_LIB}")
+endif()
+if(NUKE_EXTRA_LIBS)
+  message(STATUS "  Extra libs:        ${NUKE_EXTRA_LIBS}")
+endif()
+if(NUKE_LINK_ALL_LIBS)
+  message(STATUS "  Sweep mode:        ON (all .lib in NDKDIR on the link line)")
+else()
+  message(STATUS "  Sweep mode:        OFF (explicit libraries only)")
+endif()
+message(STATUS "  ")
+message(STATUS "Plugin:")
+message(STATUS "  StabilizeGeo.dll   node class 'StabilizeGeoUSD'")
+message(STATUS "  ")
+message(STATUS "Installation:")
+message(STATUS "  Install prefix:    ${CMAKE_INSTALL_PREFIX}")
+message(STATUS "  ")
+message(STATUS "Build Commands:")
+message(STATUS "  Configure:         cmake -B build -G \"Visual Studio 17 2022\" -A x64 -DNUKE_VERSION=${NUKE_VERSION}")
+message(STATUS "  Build:             cmake --build build --config Release")
+message(STATUS "  Install:           cmake --install build --config Release")
+message(STATUS "  ")
+message(STATUS "Usage in Nuke (Windows):")
+message(STATUS "  Add to init.py or menu.py:")
+message(STATUS "    nuke.pluginAddPath('C:/Users/YourName/.nuke')")
+message(STATUS "  Or load individually:")
+message(STATUS "    nuke.load('StabilizeGeo.dll')")
+message(STATUS "===========================================================================")
+message(STATUS "")
